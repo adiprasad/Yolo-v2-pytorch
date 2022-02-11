@@ -5,12 +5,12 @@ import os
 import argparse
 import json
 import torch.nn as nn
-from mcunet.tinynas.nn.networks.mobilenet_v2 import ProxylessNASNets
+from mcunet.tinynas.nn.networks.proxyless_nets import ProxylessNASNets
 from torch.utils.data import DataLoader
 from src.voc_dataset import VOCDataset
 from src.utils import *
 from src.loss import YoloLoss
-from src.yolo_net import Yolo, YoloWithProxylessNas
+#from src.yolo_net import Yolo, YoloWithProxylessNas
 from tensorboardX import SummaryWriter
 import shutil
 
@@ -50,16 +50,20 @@ def get_args():
     return args
 
 
-def load_and_return_pretrained_proxyless_nas(mcu_net_json_path, load_checkpoint=True):
+def load_and_return_pretrained_proxyless_nas(mcu_net_json_path, num_classes, load_checkpoint=True):
     with open(mcu_net_json_path) as f:
         config = json.load(f)
 
     file_name = mcu_net_json_path.split("/")[-1].split(".")[0]
     model = ProxylessNASNets.build_from_config(config)
+    model.anchors = [(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
+                    (11.2364, 10.0071)]
 
     if load_checkpoint:
         checkpoint = torch.load('mcunet/assets/pt_ckpt/{}.pth'.format(file_name))
         model.load_state_dict(checkpoint['state_dict'])
+
+    model.classifier = nn.Conv2d(160, len(model.anchors) * (5 + num_classes), 1, 1, 0, bias=False)
 
     return model
 
@@ -87,9 +91,7 @@ def train(opt):
     test_set = VOCDataset(opt.data_path, opt.year, opt.test_set, opt.image_size, is_training=False)
     test_generator = DataLoader(test_set, **test_params)
 
-    proxyless_nas = load_and_return_pretrained_proxyless_nas(opt.mcunet_config_path, opt.pre_trained_model_type == "params")
-
-    model = YoloWithProxylessNas(proxyless_nas, training_set.num_classes)
+    model = load_and_return_pretrained_proxyless_nas(opt.mcunet_config_path, training_set.num_classes, opt.pre_trained_model_type == "params")
 
     # The following line will re-initialize weight for the last layer, which is useful
     # when you want to retrain the model based on my trained weights. if you uncomment it,
@@ -101,17 +103,14 @@ def train(opt):
     os.makedirs(log_path)
     writer = SummaryWriter(log_path)
     if torch.cuda.is_available():
-        writer.add_graph(model.cpu(), torch.rand(opt.batch_size, 3, opt.image_size, opt.image_size))
         model.cuda()
-        model.proxyless_nas_net.cuda()
-    else:
-        writer.add_graph(model, torch.rand(opt.batch_size, 3, opt.image_size, opt.image_size))
+
     criterion = YoloLoss(training_set.num_classes, model.anchors, opt.reduction)
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-5, momentum=opt.momentum, weight_decay=opt.decay)
     best_loss = 1e10
     best_epoch = 0
     model.train()
-    model.proxyless_nas_net.train()
+    #model.proxyless_nas_net.train()
     num_iter_per_epoch = len(training_generator)
     for epoch in range(opt.num_epoches):
         if str(epoch) in learning_rate_schedule.keys():
@@ -144,7 +143,7 @@ def train(opt):
             writer.add_scalar('Train/Class_loss', loss_cls, epoch * num_iter_per_epoch + iter)
         if epoch % opt.test_interval == 0:
             model.eval()
-            model.proxyless_nas_net.eval()
+            #model.proxyless_nas_net.eval()
             loss_ls = []
             loss_coord_ls = []
             loss_conf_ls = []
@@ -178,7 +177,7 @@ def train(opt):
             writer.add_scalar('Test/Confidence_loss', te_conf_loss, epoch)
             writer.add_scalar('Test/Class_loss', te_cls_loss, epoch)
             model.train()
-            model.proxyless_nas_net.train()
+            #model.proxyless_nas_net.train()
             if te_loss + opt.es_min_delta < best_loss:
                 best_loss = te_loss
                 best_epoch = epoch
