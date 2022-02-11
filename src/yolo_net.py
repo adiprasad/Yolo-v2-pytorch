@@ -5,6 +5,30 @@ import torch.nn as nn
 import torch
 
 
+class YoloWithProxylessNas(nn.Module):
+    def __init__(self, proxyless_nas_net, num_classes,
+                 anchors=[(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
+                          (11.2364, 10.0071)]):
+        super(YoloWithProxylessNas, self).__init__()
+        self.proxyless_nas_net = proxyless_nas_net
+        self.num_classes = num_classes
+        self.anchors = anchors
+
+        ## Generalize 160 to whatever is the output from last block of proxyless nas
+        self.yolo_conv_layer = self.stage3_conv2 = nn.Conv2d(160, len(self.anchors) * (5 + num_classes), 1, 1, 0, bias=False)
+
+    def forward(self, input):
+        x = self.proxyless_nas_net.first_conv(input)
+        for block in self.proxyless_nas_net.blocks:
+            x = block(x)
+        if self.proxyless_nas_net.feature_mix_layer is not None:
+            x = self.proxyless_nas_net.feature_mix_layer(x)
+
+        output = self.yolo_conv_layer(x)
+
+        return output
+
+
 class Yolo(nn.Module):
     def __init__(self, num_classes,
                  anchors=[(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053),
