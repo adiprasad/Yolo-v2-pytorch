@@ -107,6 +107,9 @@ def post_processing(logits, image_size, gt_classes, anchors, conf_threshold, nms
         keep = keep.cpu()
         conflicting = conflicting.cpu()
 
+        # Convert boolean tensor to int for subtraction below(keep -= conflicting[i]) to work with newer pytorch versions
+        conflicting = conflicting.long()
+
         keep_len = len(keep) - 1
         for i in range(1, keep_len):
             if keep[i] > 0:
